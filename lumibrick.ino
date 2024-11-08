@@ -33,7 +33,7 @@ const long interval = 500;
 bool ledState = false;
 
 const char* deviceName = "LumiBrick";
-const char* version = "1.0.0-alpha.11";
+const char* version = "1.0.0-alpha.13";
 bool ledIsOn = false;
 int ledColorR = 0, ledColorG = 0, ledColorB = 0;
 
