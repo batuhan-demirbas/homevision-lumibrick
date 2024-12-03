@@ -24,7 +24,7 @@ String mdns_name;
 #define NUM_LEDS 21
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, LED_PIN, NEO_GRBW + NEO_KHZ800);
 
-#define CLEAR_CREDENTIALS_BUTTON_PIN 0
+#define CLEAR_CREDENTIALS_BUTTON_PIN 4
 unsigned long buttonPressStartTime = 0;
 bool credentialsCleared = false;
 
@@ -32,8 +32,8 @@ unsigned long previousMillis = 0;
 const long interval = 500;
 bool ledState = false;
 
-const char* deviceName = "LumiBrick";
-const char* version = "1.0.0-alpha.13";
+const char* deviceName = "Lumibrick";
+const char* version = "1.0.0-alpha.14";
 bool ledIsOn = false;
 int ledColorR = 0, ledColorG = 0, ledColorB = 0;
 
@@ -58,7 +58,7 @@ void performOTAUpdate(String firmwareURL);
 void setup() {
   Serial.begin(115200);
   strip.begin();
-  strip.show();  // LED'leri başlat
+  strip.show();  // Initialize LEDs
 
   Serial.println("Device name: ");
   Serial.println(deviceName);
@@ -66,32 +66,32 @@ void setup() {
   Serial.println(version);
 
   pinMode(CLEAR_CREDENTIALS_BUTTON_PIN, INPUT_PULLUP);
-  EEPROM.begin(512);  // EEPROM başlatma
+  EEPROM.begin(512);  // Initialize EEPROM
 
-  // Wi-Fi modunu başlat
+  // Initialize WiFi mode
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();  // Var olan bağlantıları kes
+  WiFi.disconnect();  // Disconnect existing connections
   
-  delay(100);  // Modülün başlatılması için küçük bir gecikme
+  delay(100);  // Small delay for module initialization
 
-  // Benzersiz SSID ve mDNS adı oluştur
+  // Create unique SSID and mDNS name
   String ssid = createUniqueSSID();
   ssid.toCharArray(ap_ssid, ssid.length() + 1);
   mdns_name = "lumibrick-" + String(WiFi.macAddress()).substring(12);
   mdns_name.replace(":", "");
 
-  // EEPROM'dan kaydedilmiş Wi-Fi bilgilerini yükle
+  // Load saved WiFi credentials from EEPROM
   loadCredentials();
 
   if (home_ssid.length() > 0 && home_password.length() > 0) {
-    // Eğer Wi-Fi bilgisi varsa Wi-Fi'ye bağlanmayı dene
+    // If WiFi credentials exist, try connecting to WiFi
     setupWiFi();
   } else {
-    // Eğer Wi-Fi bilgisi yoksa AP modunu başlat
+    // Only start AP mode if no credentials exist
     startAPMode();
   }
 
-  // Web sunucusunu başlat
+  // Start web server
   startWebServer();
 }
 
@@ -99,34 +99,31 @@ String createUniqueSSID() {
   String mac = WiFi.macAddress();
   Serial.println("MAC Address in createUniqueSSID: " + mac);
   mac.replace(":", "");
-  String uniqueSSID = "HomeVision_LumiBrick_" + mac.substring(8);
+  String uniqueSSID = "HomeVision_Lumibrick_" + mac.substring(8);
   return uniqueSSID;
 }
 
 void loop() {
   monitorCredentialsClearButton();
   
-  // Handle client requests
   server.handleClient();
 
-  // Blink LED in AP mode
   if (isAPMode) {
     blinkLED();
   } else {
     // Check Wi-Fi status and attempt to reconnect if disconnected
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Wi-Fi disconnected, attempting to reconnect...");
-    unsigned long reconnectAttemptTime = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("Wi-Fi disconnected, attempting to reconnect...");
+      
+      WiFi.begin(home_ssid.c_str(), home_password.c_str());
+      
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+        blinkWiFiAttemptLED();
+      }
 
-    // Try to reconnect for 30 seconds
-    while (WiFi.status() != WL_CONNECTED && millis() - reconnectAttemptTime < 30000) {
-      delay(500);
-      Serial.print(".");
-      blinkWiFiAttemptLED();  // Continue blue LED blinking while attempting reconnection
-    }
-
-    // Check if reconnection was successful
-    if (WiFi.status() == WL_CONNECTED) {
+      // Connection successful
       Serial.println("\nReconnected to Wi-Fi");
       Serial.print("IP address: ");
       Serial.println(WiFi.localIP());
@@ -143,54 +140,41 @@ void loop() {
         strip.setPixelColor(i, strip.Color(0, 255, 0));  // Green
       }
       strip.show();
-    } else {
-      Serial.println("\nReconnection attempt failed, starting AP mode.");
-      startAPMode();  // Re-enter AP mode if reconnection fails
     }
-  }
   }
 }
 
-// Function to setup Wi-Fi
 // Function to setup Wi-Fi
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(home_ssid.c_str(), home_password.c_str());
   Serial.println("Attempting to connect to Wi-Fi...");
 
-  unsigned long startAttemptTime = millis();
-
-  // Try to connect for 30 seconds, then timeout
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-    blinkWiFiAttemptLED();  // Mavi yanıp sönme işlemi devam edecek
+    blinkWiFiAttemptLED();  // Continue blue LED blinking
   }
 
-  // Check if connection was successful
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConnected to Wi-Fi");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+  // Connection successful
+  Serial.println("\nConnected to Wi-Fi");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
 
-    // Start mDNS responder
-    if (!MDNS.begin(mdns_name.c_str())) {
-      Serial.println("Error setting up mDNS responder on home network!");
-    } else {
-      Serial.println("mDNS responder started successfully. You can access your device via: " + mdns_name + ".local");
-    }
-
-    // Turn on green LEDs to indicate success
-    for (int i = 0; i < NUM_LEDS; i++) {
-      strip.setPixelColor(i, strip.Color(0, 255, 0));  // Green
-    }
-    strip.show();
-
-    isAPMode = false;  // Ensure AP mode is disabled
+  // Start mDNS responder
+  if (!MDNS.begin(mdns_name.c_str())) {
+    Serial.println("Error setting up mDNS responder on home network!");
   } else {
-    Serial.println("\nFailed to connect to Wi-Fi, switching to AP mode.");
-    startAPMode();  // Start Access Point mode if Wi-Fi connection fails
+    Serial.println("mDNS responder started successfully. You can access your device via: " + mdns_name + ".local");
   }
+
+  // Turn on green LEDs to indicate success
+  for (int i = 0; i < NUM_LEDS; i++) {
+    strip.setPixelColor(i, strip.Color(0, 255, 0));  // Green
+  }
+  strip.show();
+
+  isAPMode = false;  // Ensure AP mode is disabled
 }
 
 // Function to start Access Point mode
