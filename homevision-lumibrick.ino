@@ -33,9 +33,11 @@ const long interval = 500;
 bool ledState = false;
 
 const char* deviceName = "Lumibrick";
-const char* version = "1.0.0-alpha.14";
+const char* version = "1.0.0-alpha.15";
 bool ledIsOn = false;
 int ledColorR = 0, ledColorG = 0, ledColorB = 0;
+int ledBrightness = 255; // Global brightness value (0-255)
+int ledColorW = 0;       // White channel value (0-255)
 
 // Function prototypes
 void setupWiFi();
@@ -403,17 +405,16 @@ void handleConnect() {
 void handleLEDStatus() {
     StaticJsonDocument<200> jsonDoc;
 
-    // Make sure the colors are being correctly reflected
     jsonDoc["isOn"] = ledIsOn;
-    jsonDoc["color"]["r"] = ledColorR;
-    jsonDoc["color"]["g"] = ledColorG;
-    jsonDoc["color"]["b"] = ledColorB;
-
-    Serial.printf("Setting LED Color to R: %d, G: %d, B: %d\n", ledColorR, ledColorG, ledColorB);
+    jsonDoc["brightness"] = map(ledBrightness, 0, 255, 0, 100); // Convert to 0-100 range for response
+    JsonObject color = jsonDoc.createNestedObject("color");
+    color["r"] = ledColorR;
+    color["g"] = ledColorG;
+    color["b"] = ledColorB;
+    color["w"] = ledColorW;
 
     String response;
     serializeJson(jsonDoc, response);
-
     server.send(200, "application/json", response);
 }
 
@@ -429,49 +430,67 @@ void handleLEDControl() {
             return;
         }
 
+        bool shouldUpdateLEDs = false;
+
+        // Handle brightness (0-100 to 0-255 conversion)
+        if (doc.containsKey("brightness")) {
+            int brightness100 = constrain(doc["brightness"].as<int>(), 0, 100);
+            // Convert 0-100 range to 0-255 range
+            ledBrightness = map(brightness100, 0, 100, 0, 255);
+            strip.setBrightness(ledBrightness);
+            shouldUpdateLEDs = true;
+        }
+
+        // Handle state (on/off)
         if (doc.containsKey("state")) {
             String state = doc["state"].as<String>();
             if (state == "on") {
                 ledIsOn = true;
-
-                for (int i = 0; i < NUM_LEDS; i++) {
-                    strip.setPixelColor(i, strip.Color(ledColorR, ledColorG, ledColorB));
-                }
-                strip.show();
-                server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"LEDs turned on\"}");
+                shouldUpdateLEDs = true;
             } else if (state == "off") {
                 ledIsOn = false;
-
                 for (int i = 0; i < NUM_LEDS; i++) {
-                    strip.setPixelColor(i, strip.Color(0, 0, 0));
+                    strip.setPixelColor(i, strip.Color(0, 0, 0, 0));
                 }
                 strip.show();
                 server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"LEDs turned off\"}");
-            } else {
-                server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid state value\"}");
+                return;
             }
-        } else if (doc.containsKey("color")) {
-            // Set color
-            JsonObject color = doc["color"];
-            if (color.containsKey("r") && color.containsKey("g") && color.containsKey("b")) {
-                ledColorR = color["r"].as<int>();
-                ledColorG = color["g"].as<int>();
-                ledColorB = color["b"].as<int>();
-                
-                // Make sure to update the LED only if it is supposed to be on
-                if (ledIsOn) {
-                    for (int i = 0; i < NUM_LEDS; i++) {
-                        strip.setPixelColor(i, strip.Color(ledColorR, ledColorG, ledColorB));
-                    }
-                    strip.show();
-                }
-                server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"LED color changed\"}");
-            } else {
-                server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid color values\"}");
-            }
-        } else {
-            server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No valid parameter found\"}");
         }
+
+        // Handle color
+        if (doc.containsKey("color")) {
+            JsonObject color = doc["color"];
+            if (color.containsKey("r")) ledColorR = constrain(color["r"].as<int>(), 0, 255);
+            if (color.containsKey("g")) ledColorG = constrain(color["g"].as<int>(), 0, 255);
+            if (color.containsKey("b")) ledColorB = constrain(color["b"].as<int>(), 0, 255);
+            if (color.containsKey("w")) ledColorW = constrain(color["w"].as<int>(), 0, 255);
+            shouldUpdateLEDs = true;
+        }
+
+        // Update LEDs if needed
+        if (shouldUpdateLEDs && ledIsOn) {
+            uint32_t rgbwColor = strip.Color(ledColorR, ledColorG, ledColorB, ledColorW);
+            for (int i = 0; i < NUM_LEDS; i++) {
+                strip.setPixelColor(i, rgbwColor);
+            }
+            strip.show();
+        }
+
+        // Send response
+        StaticJsonDocument<200> responseDoc;
+        responseDoc["status"] = "success";
+        responseDoc["state"] = ledIsOn ? "on" : "off";
+        responseDoc["brightness"] = map(ledBrightness, 0, 255, 0, 100); // Convert back to 0-100 for response
+        JsonObject responseColor = responseDoc.createNestedObject("color");
+        responseColor["r"] = ledColorR;
+        responseColor["g"] = ledColorG;
+        responseColor["b"] = ledColorB;
+        responseColor["w"] = ledColorW;
+
+        String response;
+        serializeJson(responseDoc, response);
+        server.send(200, "application/json", response);
     } else {
         server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No JSON body found\"}");
     }
